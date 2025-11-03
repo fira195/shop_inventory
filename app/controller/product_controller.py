@@ -2,10 +2,15 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 from fastapi import HTTPException
 from app.model.models import Product
+from app.schemas.product import ProductCreate, ProductUpdate # Import schemas
 
 # Create Product
-async def create_product(session: AsyncSession, product_data: dict):
-    product = Product(**product_data)  # accept raw dict
+async def create_product(session: AsyncSession, product_data: ProductCreate):
+    # Convert Pydantic schema to a dictionary, then to SQLModel instance
+    # Pass created_by_id if you add it to the function signature
+    product_dict = product_data.model_dump()
+    product = Product(**product_dict) 
+    
     session.add(product)
     await session.commit()
     await session.refresh(product)
@@ -24,12 +29,20 @@ async def get_product(session: AsyncSession, product_id: int):
     return product
 
 # Update Product
-async def update_product(session: AsyncSession, product_id: int, product_data: dict):
+async def update_product(
+    session: AsyncSession, product_id: int, product_data: ProductUpdate
+):
     product = await session.get(Product, product_id)
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
-    for key, value in product_data.items():  # use dict directly
+    
+    # Get data as a dict, excluding any fields that were not set (unset)
+    # This prevents accidentally overwriting fields with None
+    update_data = product_data.model_dump(exclude_unset=True)
+
+    for key, value in update_data.items():
         setattr(product, key, value)
+        
     session.add(product)
     await session.commit()
     await session.refresh(product)
@@ -42,4 +55,5 @@ async def delete_product(session: AsyncSession, product_id: int):
         raise HTTPException(status_code=404, detail="Product not found")
     await session.delete(product)
     await session.commit()
-    return {"detail": "Product deleted"}
+    # Don't return a body for a 204 response
+    return

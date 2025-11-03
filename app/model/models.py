@@ -52,11 +52,40 @@ class POStatus(str, Enum):
     cancelled = "cancelled"
 
 # ---------- CORE TABLES ----------
-class User(SQLModel, table=True):
-    id: Optional[int] = Field(default=None, primary_key=True)
-    username: str
+class UserBase(SQLModel):
+    # Make username optional: customers are allowed to register without a username.
+    # Keep the DB column unique (NULLs are allowed) and indexed for lookups when present.
+    username: Optional[str] = Field(default=None, index=True, unique=True)
+    email: str = Field(index=True, unique=True)
     role: str
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    phone: Optional[str] = Field(default=None, index=True, unique=True)  # Required for customers
+    name: Optional[str] = Field(default=None)  # For customer names
+
+class User(UserBase, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    hashed_password: str
+    created_by: Optional[int] = Field(default=None, foreign_key="user.id")
+    updated_by: Optional[int] = Field(default=None, foreign_key="user.id")
+    created_at: Optional[datetime] = Field(default_factory=datetime.utcnow)
+    updated_at: Optional[datetime] = Field(default_factory=datetime.utcnow)
+
+
+class UserRead(UserBase):
+    id: int
+    created_at: datetime
+    updated_at: datetime
+    created_by: Optional[int]
+    updated_by: Optional[int]
+
+
+class UserCreate(SQLModel):
+    # username is optional for customers; admins/staff can still provide one
+    username: Optional[str] = None
+    email: str
+    password: str
+    role: str
+    phone: Optional[str] = None
+    name: Optional[str] = None
 
 class Category(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -70,10 +99,24 @@ class Supplier(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     name: str
 
-class Customer(SQLModel, table=True):
+class CustomerBalanceBase(SQLModel):
+    customer_id: int = Field(foreign_key="user.id")
+    balance: float
+
+class CustomerBalanceCreate(SQLModel):
+    customer_id: int
+    balance: float
+
+class CustomerBalance(CustomerBalanceBase, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
-    name: str
-    phone: Optional[str] = None
+    created_at: Optional[datetime] = Field(default_factory=datetime.utcnow)
+    updated_at: Optional[datetime] = Field(default_factory=datetime.utcnow)
+
+class CustomerBalanceRead(CustomerBalanceBase):
+    id: int
+    created_at: datetime
+    updated_at: datetime
+
 
 # ---------- PRODUCTS & STOCK ----------
 class Product(SQLModel, table=True):
@@ -148,7 +191,8 @@ class Sale(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     sale_date: datetime = Field(default_factory=datetime.utcnow)
     sold_by: Optional[int] = Field(default=None, foreign_key="user.id")
-    customer_id: Optional[int] = Field(default=None, foreign_key="customer.id")
+    # Customer reference now points to `user.id` (users with role='customer')
+    customer_id: Optional[int] = Field(default=None, foreign_key="user.id")
     payment_method: PaymentMethod
     total_amount: float
     notes: Optional[str] = None
@@ -194,8 +238,11 @@ class Expense(SQLModel, table=True):
 
 # ---------- BALANCES ----------
 class CustomerBalance(SQLModel, table=True):
+    __table_args__ = {"extend_existing": True}
+
     id: Optional[int] = Field(default=None, primary_key=True)
-    customer_id: int = Field(foreign_key="customer.id")
+    # Customer balances now reference the `user` table (users with role='customer')
+    customer_id: int = Field(foreign_key="user.id")
     total_credit: float
     total_paid: float
     outstanding: float
@@ -218,7 +265,9 @@ class USDExchangeRate(SQLModel, table=True):
 # ---------- REPAIRS ----------
 class Repair(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
-    customer_id: int = Field(foreign_key="customer.id")
+    # Repairs are associated with customers — represented as `User` rows
+    # with role='customer'. Keep the column name `customer_id` for now.
+    customer_id: int = Field(foreign_key="user.id")
     device_description: str
     deposit_amount: float
     status: RepairStatus
@@ -258,3 +307,18 @@ class PurchaseOrderItem(SQLModel, table=True):
     qty_received: int
     unit_cost: float
     notes: Optional[str] = None
+
+
+# ---------- RECEIPTS & DRAFTS (simple mappings) ----------
+class Receipt(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    receipt_id: str
+    sale_id: int = Field(foreign_key="sale.id")
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class DraftReceipt(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    draft_id: str
+    data: str  # JSON serialized payload
+    created_at: datetime = Field(default_factory=datetime.utcnow)
